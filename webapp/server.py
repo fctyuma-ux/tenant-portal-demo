@@ -5,6 +5,7 @@ R2B チェックリスト・進捗ビューア
 
 import json
 import sqlite3
+import markdown
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -23,6 +24,45 @@ def get_db():
     conn.row_factory = sqlite3.Row
     conn.execute(f"ATTACH DATABASE '{PERSONAL_DB}' AS personal")
     return conn
+
+
+def get_research_dir(sprint_num: int) -> Path:
+    """sprintディレクトリパスを取得"""
+    return TRAINEE_ROOT / f"training-sprint{sprint_num}"
+
+
+def load_markdown_file(file_path: Path) -> str:
+    """mdファイルをHTMLに変換"""
+    if not file_path.exists():
+        return '<div class="not-created">📝 まだ作成されていません</div>'
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        html = markdown.markdown(content, extensions=['tables', 'fenced_code'])
+        return f'<div class="markdown-content">{html}</div>'
+    except Exception as e:
+        return f'<div class="not-created">エラーが発生しました: {str(e)}</div>'
+
+
+def render_secondary_tabs(sprint_num: int, active_tab: str) -> str:
+    """セカンダリタブHTMLを生成"""
+    tabs = [
+        {"id": "checklist", "label": "チェックリスト"},
+        {"id": "journey", "label": "ユーザージャーニー"},
+        {"id": "project", "label": "プロジェクト概要"},
+        {"id": "functions", "label": "機能一覧"},
+        {"id": "ui", "label": "画面仕様"},
+        {"id": "data", "label": "データ仕様"},
+        {"id": "api", "label": "API仕様"},
+    ]
+
+    tabs_html = '<div class="secondary-tabs">'
+    for tab in tabs:
+        active_class = "active" if tab["id"] == active_tab else ""
+        tabs_html += f'<a href="/sprint/{sprint_num}?tab={tab["id"]}" class="tab-item {active_class}">{tab["label"]}</a>'
+    tabs_html += '</div>'
+    return tabs_html
 
 
 # HTML テンプレート
@@ -66,6 +106,23 @@ BASE_HTML = """
         .progress-fill {{ height: 100%; background: #4caf50; }}
         a {{ color: #007bff; text-decoration: none; }}
         a:hover {{ text-decoration: underline; }}
+        .secondary-tabs {{ display: flex; gap: 10px; margin: 20px 0; border-bottom: 2px solid #eee; }}
+        .tab-item {{ padding: 12px 16px; background: none; border: none; cursor: pointer; font-size: 14px; color: #666; border-bottom: 3px solid transparent; transition: all 0.3s; }}
+        .tab-item:hover {{ color: #007bff; }}
+        .tab-item.active {{ color: #007bff; border-bottom: 3px solid #007bff; font-weight: 600; }}
+        .markdown-content {{ background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); line-height: 1.6; }}
+        .markdown-content h1 {{ color: #333; margin-top: 0; }}
+        .markdown-content h2 {{ color: #555; margin-top: 30px; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
+        .markdown-content h3 {{ color: #666; margin-top: 20px; }}
+        .markdown-content table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+        .markdown-content th, .markdown-content td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+        .markdown-content th {{ background: #f8f9fa; font-weight: 600; }}
+        .markdown-content code {{ background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }}
+        .markdown-content pre {{ background: #f5f5f5; padding: 15px; border-radius: 8px; overflow-x: auto; }}
+        .markdown-content blockquote {{ border-left: 4px solid #007bff; padding-left: 15px; margin: 15px 0; color: #666; }}
+        .markdown-content ul, .markdown-content ol {{ margin: 15px 0; }}
+        .markdown-content li {{ margin: 8px 0; }}
+        .not-created {{ background: #fff3cd; padding: 20px; border-radius: 8px; text-align: center; color: #856404; }}
     </style>
 </head>
 <body>
@@ -252,83 +309,120 @@ def progress_view():
 
 
 @app.get("/sprint/{sprint_num}", response_class=HTMLResponse)
-def sprint_view(sprint_num: int):
-    conn = get_db()
-    cursor = conn.cursor()
+def sprint_view(sprint_num: int, request: Request):
+    # クエリパラメータからタブを取得（デフォルト: checklist）
+    active_tab = request.query_params.get("tab", "checklist")
 
-    cursor.execute("""
-        SELECT
-            ci.id,
-            ci.domain,
-            ci.category,
-            ci.subcategory,
-            ci.title,
-            ci.type,
-            sp.required_status,
-            p.status as current_status,
-            COUNT(cd.id) as total_details,
-            SUM(CASE WHEN p2.status = 'check' THEN 1 ELSE 0 END) as checked_details
-        FROM sprint_plan sp
-        JOIN checklist_items ci ON sp.item_id = ci.id
-        LEFT JOIN personal.progress p ON ci.id = p.item_id
-        LEFT JOIN checklist_details cd ON ci.id = cd.parent_id
-        LEFT JOIN personal.progress p2 ON cd.id = p2.item_id
-        WHERE sp.sprint = ?
-        GROUP BY ci.id
-        ORDER BY ci.domain, ci.id
-    """, (sprint_num,))
-    items = cursor.fetchall()
+    # セカンダリタブHTMLを生成
+    tabs_html = render_secondary_tabs(sprint_num, active_tab)
 
-    conn.close()
+    if active_tab == "checklist":
+        # チェックリスト表示（既存ロジック）
+        conn = get_db()
+        cursor = conn.cursor()
 
-    def render_status(status_json):
-        statuses = json.loads(status_json)
-        return " → ".join(f'<span class="status status-{s}">{s}</span>' for s in statuses)
+        cursor.execute("""
+            SELECT
+                ci.id,
+                ci.domain,
+                ci.category,
+                ci.subcategory,
+                ci.title,
+                ci.type,
+                sp.required_status,
+                p.status as current_status,
+                COUNT(cd.id) as total_details,
+                SUM(CASE WHEN p2.status = 'check' THEN 1 ELSE 0 END) as checked_details
+            FROM sprint_plan sp
+            JOIN checklist_items ci ON sp.item_id = ci.id
+            LEFT JOIN personal.progress p ON ci.id = p.item_id
+            LEFT JOIN checklist_details cd ON ci.id = cd.parent_id
+            LEFT JOIN personal.progress p2 ON cd.id = p2.item_id
+            WHERE sp.sprint = ?
+            GROUP BY ci.id
+            ORDER BY ci.domain, ci.id
+        """, (sprint_num,))
+        items = cursor.fetchall()
 
-    rows = ""
-    for item in items:
-        current = item["current_status"]
-        current_display = current or "未着手"
-        current_class = f"status-{current}" if current else "status-none"
-        
-        # 詳細項目の進捗を確認
-        if not current and item['total_details'] > 0:
-            checked = item['checked_details'] or 0
-            total = item['total_details']
-            if checked == total:
-                current_display = "Check (Auto)"
-                current_class = "status-check"
-            elif checked > 0:
-                current_display = f"進行中 ({checked}/{total})"
-                current_class = "status-explained"
+        conn.close()
 
-        rows += f"""
-        <tr>
-            <td><a href="/item/{item['id']}">{item['id']}</a></td>
-            <td><span class="domain">Domain {item['domain']}</span></td>
-            <td>{item['subcategory']}</td>
-            <td>{item['title']}</td>
-            <td>{render_status(item['required_status'])}</td>
-            <td><span class="status {current_class}">{current_display}</span></td>
-        </tr>
+        def render_status(status_json):
+            statuses = json.loads(status_json)
+            return " → ".join(f'<span class="status status-{s}">{s}</span>' for s in statuses)
+
+        rows = ""
+        for item in items:
+            current = item["current_status"]
+            current_display = current or "未着手"
+            current_class = f"status-{current}" if current else "status-none"
+
+            # 詳細項目の進捗を確認
+            if not current and item['total_details'] > 0:
+                checked = item['checked_details'] or 0
+                total = item['total_details']
+                if checked == total:
+                    current_display = "Check (Auto)"
+                    current_class = "status-check"
+                elif checked > 0:
+                    current_display = f"進行中 ({checked}/{total})"
+                    current_class = "status-explained"
+
+            rows += f"""
+            <tr>
+                <td><a href="/item/{item['id']}">{item['id']}</a></td>
+                <td><span class="domain">Domain {item['domain']}</span></td>
+                <td>{item['subcategory']}</td>
+                <td>{item['title']}</td>
+                <td>{render_status(item['required_status'])}</td>
+                <td><span class="status {current_class}">{current_display}</span></td>
+            </tr>
+            """
+
+        content = f"""
+        <h1>Sprint {sprint_num} チェックリスト</h1>
+        <p>全 {len(items)} 項目</p>
+
+        {tabs_html}
+
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Domain</th>
+                <th>カテゴリ</th>
+                <th>タイトル</th>
+                <th>目標Status</th>
+                <th>現在</th>
+            </tr>
+            {rows}
+        </table>
         """
+    else:
+        # マークダウンファイル表示
+        file_map = {
+            "journey": "journey.md",
+            "project": "project.md",
+            "functions": "functions.md",
+            "ui": "ui.md",
+            "data": "data.md",
+            "api": "api.md",
+        }
 
-    content = f"""
-    <h1>Sprint {sprint_num} チェックリスト</h1>
-    <p>全 {len(items)} 項目</p>
+        if active_tab not in file_map:
+            content = f"{tabs_html}<div class='not-created'>不正なタブです</div>"
+        else:
+            research_dir = get_research_dir(sprint_num)
+            file_path = research_dir / "docs" / "requirements" / file_map[active_tab]
 
-    <table>
-        <tr>
-            <th>ID</th>
-            <th>Domain</th>
-            <th>カテゴリ</th>
-            <th>タイトル</th>
-            <th>目標Status</th>
-            <th>現在</th>
-        </tr>
-        {rows}
-    </table>
-    """
+            if not research_dir.exists():
+                markdown_html = f'<div class="not-created">Sprint {sprint_num} ディレクトリが見つかりません</div>'
+            else:
+                markdown_html = load_markdown_file(file_path)
+
+            content = f"""
+            <h1>Sprint {sprint_num}</h1>
+            {tabs_html}
+            {markdown_html}
+            """
 
     return BASE_HTML.format(title=f"Sprint {sprint_num}", content=content)
 
