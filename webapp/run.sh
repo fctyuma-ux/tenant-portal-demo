@@ -8,7 +8,7 @@ if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
     python3 -m venv .venv
     source .venv/bin/activate
-    pip install pyyaml fastapi uvicorn markdown
+    pip install pyyaml fastapi uvicorn
 else
     source .venv/bin/activate
 fi

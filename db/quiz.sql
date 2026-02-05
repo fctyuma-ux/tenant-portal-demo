@@ -1,0 +1,13 @@
+-- R2B Quiz Database Initial Data
+-- クイズ問題と選択肢
+
+-- クイズデータ例（実装プロジェクトで具体的な問題を追加）
+-- 以下は形式のテンプレート：
+--
+-- INSERT INTO quiz_questions (question_id, sprint, subcategory_id, question_text, explanation, is_active) VALUES
+--   ('Q1-1', 1, 'CK-1', 'LLMを使った開発の利点は何か？', 'LLMは...', TRUE);
+--
+-- INSERT INTO quiz_choices (choice_id, question_id, choice_text, is_correct, sort_order, feedback) VALUES
+--   ('Q1-1-A', 'Q1-1', '開発スピードが上がる', TRUE, 1, '正解。LLMの支援により...'),
+--   ('Q1-1-B', 'Q1-1', '自動でテストを書いてくれる', FALSE, 2, '不正解。AIはあくまで支援ツール...'),
+--   ('Q1-1-C', 'Q1-1', 'バグが完全になくなる', FALSE, 3, '不正解。品質管理は人間の責任...');
