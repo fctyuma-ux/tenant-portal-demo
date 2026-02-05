@@ -12,14 +12,14 @@ AI駆動開発は、「AIに丸投げ」することではありません。
 
 ```mermaid
 graph TB
-    subgraph 人間の役割
+    subgraph human["人間の役割"]
         H1["要件を明確にする"]
         H2["設計の判断をする"]
         H3["生成されたコードを検証する"]
         H4["最終責任を持つ"]
     end
 
-    subgraph AIの役割
+    subgraph ai["AIの役割"]
         A1["コードを生成する"]
         A2["パターンを提案する"]
         A3["エラーを解説する"]
@@ -54,11 +54,11 @@ AI：「最初から言ってくれれば...」
 
 ```mermaid
 graph TB
-    subgraph コンテキスト
-        W["Why（目的）<br/>なぜ作るのか"]
-        Wh["What（成果物）<br/>何を作るのか"]
-        C["Constraints（制約）<br/>守るべきルール"]
-        P["Premise（前提）<br/>環境・既存コード"]
+    subgraph context["コンテキスト"]
+        W["Why（目的）\nなぜ作るのか"]
+        Wh["What（成果物）\n何を作るのか"]
+        C["Constraints（制約）\n守るべきルール"]
+        P["Premise（前提）\n環境・既存コード"]
     end
 
     W --> Good["良い出力"]
