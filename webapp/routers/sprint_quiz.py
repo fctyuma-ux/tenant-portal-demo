@@ -70,7 +70,56 @@ def sprint_quiz_view(sprint_num: int, request: Request):
     """, (sprint_num,))
 
     all_rows = cursor.fetchall()
+
+    # チェックリスト項目を取得（サブカテゴリごと）
+    cursor.execute("""
+        SELECT
+            ci.item_id,
+            ci.subcategory_id,
+            ci.title,
+            ci.description,
+            ci.item_type,
+            ci.sort_order,
+            sr.required_status,
+            ir.kind AS resource_kind,
+            ir.title AS resource_title,
+            ir.url AS resource_url
+        FROM checklist_items ci
+        JOIN sprint_requirements sr ON ci.item_id = sr.item_id AND sr.sprint = ?
+        JOIN subcategories s ON ci.subcategory_id = s.subcategory_id
+        LEFT JOIN item_resources ir ON ci.item_id = ir.item_id
+        WHERE ci.is_active = 1
+        ORDER BY ci.subcategory_id, ci.sort_order, ir.resource_id
+    """, (sprint_num,))
+
+    checklist_rows = cursor.fetchall()
     conn.close()
+
+    # サブカテゴリ → チェックリスト項目のマップを構築
+    checklist_by_sub = {}
+    for row in checklist_rows:
+        sid = row["subcategory_id"]
+        iid = row["item_id"]
+        if sid not in checklist_by_sub:
+            checklist_by_sub[sid] = {}
+        if iid not in checklist_by_sub[sid]:
+            checklist_by_sub[sid][iid] = {
+                "item_id": iid,
+                "title": row["title"],
+                "description": row["description"] or "",
+                "item_type": row["item_type"],
+                "required_status": row["required_status"],
+                "resources": [],
+            }
+        if row["resource_title"]:
+            res = {
+                "kind": row["resource_kind"] or "",
+                "title": row["resource_title"],
+                "url": row["resource_url"] or "",
+            }
+            # 重複排除
+            if res not in checklist_by_sub[sid][iid]["resources"]:
+                checklist_by_sub[sid][iid]["resources"].append(res)
 
     # JSONデータ構築
     quiz_data = {}
@@ -106,6 +155,9 @@ def sprint_quiz_view(sprint_num: int, request: Request):
                 except Exception:
                     md_html = ""
 
+            # このサブカテゴリに紐づくチェックリスト項目
+            cl_items = list(checklist_by_sub.get(sid, {}).values())
+
             cat["questions"][sid] = {
                 "question_id": row["question_id"],
                 "subcategory_id": sid,
@@ -114,6 +166,7 @@ def sprint_quiz_view(sprint_num: int, request: Request):
                 "explanation": row["explanation"],
                 "passed": row["passed_at"] is not None,
                 "md_html": md_html,
+                "checklist_items": cl_items,
                 "choices": []
             }
 
@@ -205,6 +258,7 @@ def sprint_quiz_view(sprint_num: int, request: Request):
                 <div id="quiz-info" style="margin-top: 15px; font-size: 14px; color: #666;"></div>
                 <div id="subcategory-status-list" style="margin-top: 12px;"></div>
                 <div id="subcategory-docs" style="margin-top: 12px;"></div>
+                <div id="checklist-items-container" style="margin-top: 12px;"></div>
                 <div id="quiz-error" style="margin-top: 10px; color: #dc3545; font-weight: 600; display: none;"></div>
             </div>
         </div>
@@ -565,65 +619,175 @@ def sprint_quiz_view(sprint_num: int, request: Request):
 
             if (!domainId || !categoryId || !quizData[domainId] || !quizData[domainId].categories[categoryId]) {
                 container.innerHTML = '';
+                renderChecklist(null);
                 return;
             }
 
             const questions = quizData[domainId].categories[categoryId].questions;
             if (questions.length === 0) {
                 container.innerHTML = '';
+                renderChecklist(null);
                 return;
             }
 
-            const options = questions
-                .map(q => {
-                    const title = q.subcategory_name || '';
-                    const hasDoc = q.md_html && q.md_html.trim().length > 0;
-                    if (!hasDoc) {
-                        return '';
-                    }
-                    return `<option value="${q.subcategory_id}">${title}</option>`;
-                })
-                .join('');
-
-            const firstDoc = questions.find(
+            const docsWithContent = questions.filter(
                 q => q.md_html && q.md_html.trim().length > 0
             );
-            const firstId = firstDoc ? firstDoc.subcategory_id : '';
-            const firstBody = firstDoc ? firstDoc.md_html : '';
 
-            if (!options) {
+            if (docsWithContent.length === 0) {
+                container.innerHTML = '';
+                const fallbackId = questions.length > 0 ? questions[0].subcategory_id : null;
+                renderChecklist(fallbackId);
+                return;
+            }
+
+            const firstDoc = docsWithContent[0];
+            const firstId = firstDoc.subcategory_id;
+
+            const rowItems = docsWithContent.map(q => {
+                const isActive = q.subcategory_id === firstId;
+                return `<div class="subcategory-doc-row" data-sid="${q.subcategory_id}"
+                    style="padding:8px 12px; border:1px solid ${isActive ? '#007bff' : '#e0e0e0'};
+                    border-radius:6px; cursor:pointer; font-size:13px; font-weight:500;
+                    background:${isActive ? '#e8f0fe' : 'white'}; transition:all 0.15s;"
+                    onmouseover="if(!this.classList.contains('active-doc'))this.style.background='#f5f5f5'"
+                    onmouseout="if(!this.classList.contains('active-doc'))this.style.background='white'">
+                    ${q.subcategory_name}
+                </div>`;
+            }).join('');
+
+            container.innerHTML = `
+                <div style="font-size: 12px; color: #666; margin-bottom: 6px;">このカテゴリの詳説</div>
+                <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:12px;">
+                    ${rowItems}
+                </div>
+                <div id="subcategory-doc-panel" style="background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+                    <div class="doc-content">${firstDoc.md_html}</div>
+                </div>
+            `;
+
+            // コードブロックのシンタックスハイライト
+            if (typeof hljs !== 'undefined') {
+                container.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+            }
+
+            // 最初の行をactive状態にする
+            const firstRow = container.querySelector('.subcategory-doc-row');
+            if (firstRow) firstRow.classList.add('active-doc');
+
+            // 行クリックイベント
+            container.querySelectorAll('.subcategory-doc-row').forEach(row => {
+                row.addEventListener('click', () => {
+                    const sid = row.dataset.sid;
+                    const selected = questions.find(q => q.subcategory_id === sid);
+
+                    // active状態の更新
+                    container.querySelectorAll('.subcategory-doc-row').forEach(r => {
+                        r.classList.remove('active-doc');
+                        r.style.background = 'white';
+                        r.style.borderColor = '#e0e0e0';
+                    });
+                    row.classList.add('active-doc');
+                    row.style.background = '#e8f0fe';
+                    row.style.borderColor = '#007bff';
+
+                    const panel = document.getElementById('subcategory-doc-panel');
+                    if (panel) {
+                        panel.innerHTML = `<div class="doc-content">${selected ? selected.md_html : ''}</div>`;
+                        if (typeof hljs !== 'undefined') {
+                            panel.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+                        }
+                    }
+                    renderChecklist(sid);
+                });
+            });
+            renderChecklist(firstId);
+        }
+
+        function renderChecklist(subcategoryId) {
+            const container = document.getElementById('checklist-items-container');
+            const domainId = quizState.selectedDomain;
+            const categoryId = quizState.selectedCategory;
+
+            if (!domainId || !categoryId || !quizData[domainId] || !quizData[domainId].categories[categoryId]) {
                 container.innerHTML = '';
                 return;
             }
 
-            container.innerHTML = `
-                <div style="font-size: 12px; color: #666; margin-bottom: 6px;">このカテゴリの詳説</div>
-                <div style="display: grid; grid-template-columns: 220px 1fr; gap: 12px;">
-                    <div>
-                        <select id="subcategory-doc-select" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                            ${options}
-                        </select>
-                    </div>
-                    <div id="subcategory-doc-panel" style="background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-                        <div class="doc-content">${firstBody}</div>
-                    </div>
-                </div>
-            `;
+            const questions = quizData[domainId].categories[categoryId].questions;
+            const target = subcategoryId
+                ? questions.find(q => q.subcategory_id === subcategoryId)
+                : questions[0];
 
-            const select = document.getElementById('subcategory-doc-select');
-            if (select && firstId) {
-                select.value = firstId;
+            if (!target || !target.checklist_items || target.checklist_items.length === 0) {
+                container.innerHTML = '';
+                return;
             }
-            if (select) {
-                select.addEventListener('change', () => {
-                    const selectedId = select.value;
-                    const selected = questions.find(q => q.subcategory_id === selectedId);
-                    const panel = document.getElementById('subcategory-doc-panel');
-                    if (panel) {
-                        panel.innerHTML = `<div class="doc-content">${selected ? selected.md_html : ''}</div>`;
-                    }
-                });
-            }
+
+            const typeLabels = {
+                'check_only': '確認のみ',
+                'judgment_focused': '判断重視',
+                'implementation_optional': '実装選択',
+                'implementation_required': '実装必須'
+            };
+            const typeColors = {
+                'check_only': '#e3f2fd;color:#1565c0',
+                'judgment_focused': '#f3e5f5;color:#6a1b9a',
+                'implementation_optional': '#e8f5e9;color:#2e7d32',
+                'implementation_required': '#fff3e0;color:#e65100'
+            };
+            const statusLabels = {
+                'CHECKED': '確認済',
+                'BUILT': '構築済',
+                'EXPLAINED': '説明可',
+                'UNDERSTOOD': '理解済'
+            };
+
+            const items = target.checklist_items.map(item => {
+                const tLabel = typeLabels[item.item_type] || item.item_type;
+                const tColor = typeColors[item.item_type] || '#e0e0e0;color:#333';
+                const sLabel = statusLabels[item.required_status] || item.required_status;
+
+                let resourcesHtml = '';
+                if (item.resources && item.resources.length > 0) {
+                    const resList = item.resources.map(r => {
+                        const kindBadge = r.kind
+                            ? `<span style="background:#e0e0e0;padding:2px 6px;border-radius:3px;font-size:11px;margin-right:4px;">${r.kind}</span>`
+                            : '';
+                        const link = r.url
+                            ? `<a href="${r.url}" target="_blank" style="color:#007bff;">${r.title}</a>`
+                            : `<span>${r.title}</span>`;
+                        return `<div style="margin:2px 0;">${kindBadge}${link}</div>`;
+                    }).join('');
+                    resourcesHtml = `<div style="margin-top:8px;"><div style="font-size:12px;color:#666;margin-bottom:4px;">参考リソース:</div>${resList}</div>`;
+                }
+
+                const descHtml = item.description
+                    ? `<div style="margin-top:6px;font-size:13px;line-height:1.6;color:#444;">${item.description.replace(/\\n/g, '<br>')}</div>`
+                    : '';
+
+                return `
+                    <details style="border:1px solid #e0e0e0;border-radius:6px;margin-bottom:6px;background:white;">
+                        <summary style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:14px;user-select:none;">
+                            <span style="background:${tColor};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;">${tLabel}</span>
+                            <span style="flex:1;font-weight:500;">${item.title}</span>
+                            <span style="background:#f5f5f5;padding:2px 8px;border-radius:4px;font-size:11px;color:#666;white-space:nowrap;">目標: ${sLabel}</span>
+                        </summary>
+                        <div style="padding:10px 14px 14px;border-top:1px solid #f0f0f0;">
+                            <div style="font-size:11px;color:#999;margin-bottom:4px;">${item.item_id}</div>
+                            ${descHtml}
+                            ${resourcesHtml}
+                        </div>
+                    </details>
+                `;
+            }).join('');
+
+            container.innerHTML = `
+                <div style="font-size: 12px; color: #666; margin-bottom: 6px;">
+                    「${target.subcategory_name}」のチェックリスト項目 (${target.checklist_items.length}件)
+                </div>
+                ${items}
+            `;
         }
 
         function renderSprintProgress() {
@@ -978,6 +1142,73 @@ async def quiz_submit(request: Request):
                 (trainee_id, sprint, subcategory_id)
             VALUES ('default', ?, ?)
         """, (sprint, subcategory_id))
+
+    # learn フェーズが not_started なら in_progress に更新
+    cursor.execute("""
+        UPDATE personal.trainee_sprint_phases
+        SET status = 'in_progress',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+        WHERE trainee_id = 'default'
+          AND sprint = ?
+          AND phase = 'learn'
+          AND status = 'not_started'
+    """, (sprint,))
+
+    # 正解時: 全サブカテゴリ合格済みなら learn を completed に更新
+    if is_correct:
+        cursor.execute("""
+            SELECT
+                COUNT(DISTINCT qq.subcategory_id) AS total_count,
+                COALESCE(COUNT(DISTINCT tqp.subcategory_id), 0) AS passed_count
+            FROM quiz.quiz_questions qq
+            LEFT JOIN personal.trainee_quiz_pass tqp
+                ON tqp.trainee_id = 'default'
+                AND tqp.sprint = qq.sprint
+                AND tqp.subcategory_id = qq.subcategory_id
+            WHERE qq.is_active = 1
+              AND qq.sprint = ?
+              AND EXISTS (
+                SELECT 1
+                FROM sprint_requirements sr
+                JOIN checklist_items ci ON sr.item_id = ci.item_id
+                JOIN status_defs sd ON sr.required_status = sd.status
+                JOIN status_defs sd_checked ON sd_checked.status = 'CHECKED'
+                WHERE sr.sprint = qq.sprint
+                  AND ci.subcategory_id = qq.subcategory_id
+                  AND ci.is_active = 1
+                  AND sd.rank >= sd_checked.rank
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM sprint_requirements sr_prev
+                    JOIN status_defs sd_prev ON sr_prev.required_status = sd_prev.status
+                    WHERE sr_prev.item_id = sr.item_id
+                      AND sr_prev.sprint < sr.sprint
+                      AND sd_prev.rank >= sd_checked.rank
+                  )
+              )
+        """, (sprint,))
+        progress = cursor.fetchone()
+        if progress and progress["total_count"] > 0 and progress["passed_count"] == progress["total_count"]:
+            cursor.execute("""
+                UPDATE personal.trainee_sprint_phases
+                SET status = 'completed',
+                    completed_at = CURRENT_TIMESTAMP
+                WHERE trainee_id = 'default'
+                  AND sprint = ?
+                  AND phase = 'learn'
+                  AND status != 'completed'
+            """, (sprint,))
+
+            # learn 完了 → design を in_progress に自動キック（まだ not_started の場合のみ）
+            cursor.execute("""
+                UPDATE personal.trainee_sprint_phases
+                SET status = 'in_progress',
+                    started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+                WHERE trainee_id = 'default'
+                  AND sprint = ?
+                  AND phase = 'design'
+                  AND status = 'not_started'
+            """, (sprint,))
 
     conn.commit()
     attempt_id = cursor.lastrowid

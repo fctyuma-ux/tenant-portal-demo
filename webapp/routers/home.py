@@ -128,7 +128,42 @@ def _get_phase_progress(cursor, sprint: int) -> dict:
         progress["learn"] = (0, 0)
 
     # Design: ドキュメント作成数/10
-    progress["design"] = _count_design_docs(sprint)
+    design_achieved, design_required = _count_design_docs(sprint)
+    progress["design"] = (design_achieved, design_required)
+
+    # Design フェーズの自動ステータス更新（安全策: スキルがshを呼ばなかった場合のフォールバック）
+    if design_achieved > 0:
+        # 1つでもあれば in_progress にする（まだ not_started の場合のみ）
+        cursor.execute("""
+            UPDATE personal.trainee_sprint_phases
+            SET status = 'in_progress',
+                started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+            WHERE trainee_id = 'default'
+              AND sprint = ?
+              AND phase = 'design'
+              AND status = 'not_started'
+        """, (sprint,))
+    if design_required > 0 and design_achieved == design_required:
+        # 全部揃ったら completed + build キック
+        cursor.execute("""
+            UPDATE personal.trainee_sprint_phases
+            SET status = 'completed',
+                completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+            WHERE trainee_id = 'default'
+              AND sprint = ?
+              AND phase = 'design'
+              AND status != 'completed'
+        """, (sprint,))
+        cursor.execute("""
+            UPDATE personal.trainee_sprint_phases
+            SET status = 'in_progress',
+                started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+            WHERE trainee_id = 'default'
+              AND sprint = ?
+              AND phase = 'build'
+              AND status = 'not_started'
+        """, (sprint,))
+        cursor.connection.commit()
 
     # Build/Review/Presentation: trainee_sprint_phasesのstatusを確認
     cursor.execute(

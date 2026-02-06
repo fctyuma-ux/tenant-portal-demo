@@ -17,8 +17,8 @@ router = APIRouter()
 
 @router.get("/sprint/{sprint_num}")
 def sprint_view(sprint_num: int):
-    """Sprint概要ページ（デフォルトはチェックリストにリダイレクト）"""
-    return RedirectResponse(url=f"/sprint/{sprint_num}/checklist", status_code=302)
+    """Sprint概要ページ（デフォルトは概要にリダイレクト）"""
+    return RedirectResponse(url=f"/sprint/{sprint_num}/overview", status_code=302)
 
 
 @router.get("/sprint/{sprint_num}/overview", response_class=HTMLResponse)

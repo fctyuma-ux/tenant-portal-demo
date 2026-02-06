@@ -146,6 +146,8 @@ BASE_HTML = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title} - R2B</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script>
         mermaid.initialize({{ startOnLoad: true, theme: 'default' }});
@@ -267,6 +269,7 @@ BASE_HTML = """
         <a href="/domains">Domain一覧</a>
     </nav>
     {content}
+    <script>hljs.highlightAll();</script>
 </body>
 </html>
 """
