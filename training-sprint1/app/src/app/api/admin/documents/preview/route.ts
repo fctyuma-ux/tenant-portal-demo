@@ -38,12 +38,21 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { createAdminClient } = await import('@/lib/supabase/admin');
-  const adminClient = createAdminClient();
-
-  const answer = await generateAnswer(adminClient, content, userData.property_id, {
-    includeUnpublished: true,
-  });
+  let answer;
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const adminClient = createAdminClient();
+    answer = await generateAnswer(adminClient, content, userData.property_id, {
+      includeUnpublished: true,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'AI回答の生成に失敗しました';
+    console.error('generateAnswer error:', message);
+    return NextResponse.json(
+      { error: { code: 'AI_ERROR', message } },
+      { status: 500 }
+    );
+  }
 
   return NextResponse.json({
     content: answer.content,
