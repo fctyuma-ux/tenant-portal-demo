@@ -68,6 +68,44 @@ function PublishToggle({ document }: { document: Document }) {
   );
 }
 
+function ReanalyzeButton({ documentId }: { documentId: string }) {
+  const [analyzing, setAnalyzing] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function handleReanalyze() {
+    setAnalyzing(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/admin/documents/${documentId}/analyze`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        setMessage('完了');
+        window.location.reload();
+      } else {
+        const body = await res.json();
+        setMessage(body.error?.message ?? 'エラー');
+      }
+    } catch {
+      setMessage('通信エラー');
+    }
+    setAnalyzing(false);
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        onClick={handleReanalyze}
+        disabled={analyzing}
+        className="text-sm text-blue-500 hover:text-blue-700 disabled:opacity-50"
+      >
+        {analyzing ? '解析中...' : '再解析'}
+      </button>
+      {message && <span className="text-xs text-gray-500">{message}</span>}
+    </div>
+  );
+}
+
 function DeleteButton({ documentId }: { documentId: string }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -177,7 +215,10 @@ export function DocumentTable({ documents }: { documents: Document[] }) {
                   <PublishToggle document={doc} />
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <DeleteButton documentId={doc.id} />
+                  <div className="flex items-center justify-end gap-3">
+                    <ReanalyzeButton documentId={doc.id} />
+                    <DeleteButton documentId={doc.id} />
+                  </div>
                 </td>
               </tr>
             );
