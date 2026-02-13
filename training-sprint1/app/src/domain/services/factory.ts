@@ -8,7 +8,7 @@ import { SupabaseMessageRepository } from '@/domain/repositories/supabase/messag
 import { SupabaseStorageRepository } from '@/domain/repositories/supabase/storage-repository';
 import { SupabasePropertyRepository } from '@/domain/repositories/supabase/property-repository';
 import { SupabaseAnnouncementRepository } from '@/domain/repositories/supabase/announcement-repository';
-import { OpenAIClient } from '@/lib/openai/ai-client';
+import { GeminiClient } from '@/lib/gemini/ai-client';
 import { AuthService } from './auth-service';
 import { ConversationService } from './conversation-service';
 import { MessageService } from './message-service';
@@ -28,7 +28,7 @@ export function createServices(supabase: SupabaseClient) {
   const storageRepo = new SupabaseStorageRepository(supabase);
   const propertyRepo = new SupabasePropertyRepository(supabase);
   const announcementRepo = new SupabaseAnnouncementRepository(supabase);
-  const aiClient = new OpenAIClient();
+  const aiClient = new GeminiClient();
 
   return {
     auth: new AuthService(userRepo),
