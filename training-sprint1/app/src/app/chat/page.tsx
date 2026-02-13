@@ -1,26 +1,15 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
+import { getPageAuth } from '@/lib/page-helpers';
 import { ChatClient } from './chat-client';
 
 export default async function ChatPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { userId, services } = await getPageAuth();
 
-  if (!user) redirect('/login');
+  const propertyId = await services.auth.getUserPropertyId(userId);
 
-  const { data: userData } = await supabase
-    .from('users')
-    .select('name, role, property_id')
-    .eq('id', user.id)
-    .single();
+  const [userName, propertyName] = await Promise.all([
+    services.auth.getUserName(userId),
+    services.property.findNameById(propertyId ?? ''),
+  ]);
 
-  const { data: property } = await supabase
-    .from('properties')
-    .select('name')
-    .eq('id', userData?.property_id)
-    .single();
-
-  return <ChatClient userName={userData?.name ?? ''} propertyName={property?.name ?? ''} />;
+  return <ChatClient userName={userName ?? ''} propertyName={propertyName ?? ''} />;
 }

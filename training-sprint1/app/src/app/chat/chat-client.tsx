@@ -158,6 +158,9 @@ export function ChatClient({ userName, propertyName }: { userName: string; prope
     if (conversationId) return conversationId;
 
     const res = await fetch('/api/conversations', { method: 'POST' });
+    if (!res.ok) {
+      throw new Error('会話の作成に失敗しました');
+    }
     const data = await res.json();
     setConversationId(data.id);
     return data.id;
@@ -207,23 +210,33 @@ export function ChatClient({ userName, propertyName }: { userName: string; prope
           },
         ]);
       } else {
-        const errData = await res.json();
+        let errorMessage = '回答の生成に失敗しました';
+        try {
+          const errData = await res.json();
+          errorMessage = errData.error?.message ?? errorMessage;
+        } catch {
+          // 非JSONレスポンスの場合はデフォルトメッセージを使用
+        }
         setMessages((prev) => [
           ...prev,
           {
             id: `err-${Date.now()}`,
             role: 'assistant',
-            content: `エラー: ${errData.error?.message ?? '回答の生成に失敗しました'}`,
+            content: `エラー: ${errorMessage}`,
           },
         ]);
       }
-    } catch {
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error && err.message !== 'Failed to fetch'
+          ? err.message
+          : '通信エラーが発生しました。再度お試しください。';
       setMessages((prev) => [
         ...prev,
         {
           id: `err-${Date.now()}`,
           role: 'assistant',
-          content: '通信エラーが発生しました。再度お試しください。',
+          content: errorMessage,
         },
       ]);
     }

@@ -1,72 +1,53 @@
 'use server';
 
-import { createClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
+import { FaqCreateSchema } from '@/schemas/faq';
+import { actionAuth, actionAuthWithProperty } from '@/lib/action-helpers';
 
 export async function createFaq(data: { category: string; question: string; answer: string }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: '認証されていません' };
+  const parsed = FaqCreateSchema.safeParse(data);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const { data: userData } = await supabase
-    .from('users')
-    .select('property_id')
-    .eq('id', user.id)
-    .single();
-  if (!userData) return { error: 'ユーザー情報が見つかりません' };
+  const auth = await actionAuthWithProperty();
+  if (!auth.ok) return auth.error;
 
-  const { error } = await supabase.from('faqs').insert({
-    property_id: userData.property_id,
-    category: data.category,
-    question: data.question,
-    answer: data.answer,
-  });
-
-  if (error) return { error: `登録に失敗しました: ${error.message}` };
-
-  revalidatePath('/admin/faqs');
-  return { success: true };
+  try {
+    await auth.services.faq.create({ property_id: auth.propertyId, ...parsed.data });
+    revalidatePath('/admin/faqs');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : '登録に失敗しました' };
+  }
 }
 
 export async function updateFaq(
   faqId: string,
   data: { category: string; question: string; answer: string }
 ) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: '認証されていません' };
+  const parsed = FaqCreateSchema.safeParse(data);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const { error } = await supabase
-    .from('faqs')
-    .update({
-      category: data.category,
-      question: data.question,
-      answer: data.answer,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', faqId);
+  const auth = await actionAuth();
+  if (!auth.ok) return auth.error;
 
-  if (error) return { error: `更新に失敗しました: ${error.message}` };
-
-  revalidatePath('/admin/faqs');
-  return { success: true };
+  try {
+    await auth.services.faq.update(faqId, parsed.data);
+    revalidatePath('/admin/faqs');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : '更新に失敗しました' };
+  }
 }
 
 export async function deleteFaq(faqId: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: '認証されていません' };
+  const auth = await actionAuth();
+  if (!auth.ok) return auth.error;
 
-  const { error } = await supabase.from('faqs').delete().eq('id', faqId);
-
-  if (error) return { error: `削除に失敗しました: ${error.message}` };
-
-  revalidatePath('/admin/faqs');
-  return { success: true };
+  try {
+    await auth.services.faq.delete(faqId);
+    revalidatePath('/admin/faqs');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : '削除に失敗しました' };
+  }
 }

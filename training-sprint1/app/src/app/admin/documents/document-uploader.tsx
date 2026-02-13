@@ -26,14 +26,14 @@ export function DocumentUploader() {
 
       const result = await uploadDocument(formData);
 
-      if (result.error) {
+      if ('error' in result) {
         setMessage({ type: 'error', text: result.error });
         setState('idle');
         return;
       }
 
       // アップロード成功 → 自動解析開始
-      if (result.documentId) {
+      if ('documentId' in result) {
         setState('analyzing');
         setMessage({
           type: 'success',

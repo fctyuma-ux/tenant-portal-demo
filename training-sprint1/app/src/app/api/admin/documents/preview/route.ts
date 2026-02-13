@@ -1,61 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
-import { generateAnswer } from '@/domain/services/chat-answer';
+import { getAuthContext, createAdminServices, errorResponse } from '@/lib/api-helpers';
+import { DocumentPreviewSchema } from '@/schemas/document';
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await getAuthContext();
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json(
-      { error: { code: 'UNAUTHORIZED', message: '認証されていません' } },
-      { status: 401 }
-    );
-  }
-
-  const { data: userData } = await supabase
-    .from('users')
-    .select('role, property_id')
-    .eq('id', user.id)
-    .single();
-
-  if (userData?.role !== 'admin') {
-    return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: '権限がありません' } },
-      { status: 403 }
-    );
+  const userInfo = await auth.services.auth.getUserRoleAndPropertyId(auth.user.id);
+  if (!userInfo || userInfo.role !== 'admin') {
+    return errorResponse('FORBIDDEN', '権限がありません', 403);
   }
 
   const body = await request.json();
-  const content = body.content?.trim();
-
-  if (!content) {
-    return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: '質問テキストが必要です' } },
-      { status: 400 }
-    );
+  const parsed = DocumentPreviewSchema.safeParse(body);
+  if (!parsed.success) {
+    return errorResponse('VALIDATION_ERROR', parsed.error.issues[0].message, 400);
   }
 
-  let answer;
   try {
-    const { createAdminClient } = await import('@/lib/supabase/admin');
-    const adminClient = createAdminClient();
-    answer = await generateAnswer(adminClient, content, userData.property_id, {
-      includeUnpublished: true,
-    });
+    const adminServices = createAdminServices();
+    const answer = await adminServices.chatAnswer.generateAnswer(
+      parsed.data.content,
+      userInfo.propertyId,
+      { includeUnpublished: true }
+    );
+    return NextResponse.json({ content: answer.content, sources: answer.sources });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'AI回答の生成に失敗しました';
     console.error('generateAnswer error:', message);
-    return NextResponse.json(
-      { error: { code: 'AI_ERROR', message } },
-      { status: 500 }
-    );
+    return errorResponse('AI_ERROR', message, 500);
   }
-
-  return NextResponse.json({
-    content: answer.content,
-    sources: answer.sources,
-  });
 }

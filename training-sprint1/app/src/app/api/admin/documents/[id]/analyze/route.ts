@@ -1,44 +1,23 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
-import { analyzePdf } from '@/domain/services/pdf-analysis';
+import { NextRequest } from 'next/server';
+import { getAuthContext, createAdminServices, errorResponse } from '@/lib/api-helpers';
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: documentId } = await params;
+  const auth = await getAuthContext();
+  if (!auth.ok) return auth.response;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json(
-      { error: { code: 'UNAUTHORIZED', message: '認証されていません' } },
-      { status: 401 }
-    );
+  try {
+    await auth.services.auth.requireAdmin(auth.user.id);
+  } catch {
+    return errorResponse('FORBIDDEN', '権限がありません', 403);
   }
 
-  // admin 権限チェック
-  const { data: userData } = await supabase.from('users').select('role').eq('id', user.id).single();
-
-  if (userData?.role !== 'admin') {
-    return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: '権限がありません' } },
-      { status: 403 }
-    );
-  }
-
-  // Service Role Key を使った管理者クライアントで解析実行
-  const { createAdminClient } = await import('@/lib/supabase/admin');
-  const adminClient = createAdminClient();
-
-  const result = await analyzePdf(adminClient, documentId);
+  const adminServices = createAdminServices();
+  const result = await adminServices.pdfAnalysis.analyzePdf(documentId);
 
   if (!result.success) {
-    return NextResponse.json(
-      { error: { code: 'ANALYSIS_FAILED', message: result.error } },
-      { status: 500 }
-    );
+    return errorResponse('ANALYSIS_FAILED', result.error ?? '解析に失敗しました', 500);
   }
 
-  return NextResponse.json({ success: true });
+  return Response.json({ success: true });
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
-import { generateAnswer } from '@/domain/services/chat-answer';
+import { getAuthContext, createAdminServices, errorResponse } from '@/lib/api-helpers';
+import { MessageSendSchema } from '@/schemas/message';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -9,44 +9,16 @@ type Params = { params: Promise<{ id: string }> };
  */
 export async function GET(request: NextRequest, { params }: Params) {
   const { id: conversationId } = await params;
+  const auth = await getAuthContext();
+  if (!auth.ok) return auth.response;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json(
-      { error: { code: 'UNAUTHORIZED', message: '認証されていません' } },
-      { status: 401 }
-    );
+  const isOwner = await auth.services.conversation.verifyOwnership(conversationId, auth.user.id);
+  if (!isOwner) {
+    return errorResponse('NOT_FOUND', '会話が見つかりません', 404);
   }
 
-  // 自分の会話であるか確認
-  const { data: conversation } = await supabase
-    .from('conversations')
-    .select('id')
-    .eq('id', conversationId)
-    .eq('user_id', user.id)
-    .single();
-
-  if (!conversation) {
-    return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: '会話が見つかりません' } },
-      { status: 404 }
-    );
-  }
-
-  const { data: messages } = await supabase
-    .from('messages')
-    .select('id, role, content, feedback, created_at')
-    .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true });
-
-  return NextResponse.json({
-    conversation_id: conversationId,
-    messages: messages ?? [],
-  });
+  const messages = await auth.services.message.getByConversationId(conversationId);
+  return NextResponse.json({ conversation_id: conversationId, messages });
 }
 
 /**
@@ -54,99 +26,63 @@ export async function GET(request: NextRequest, { params }: Params) {
  */
 export async function POST(request: NextRequest, { params }: Params) {
   const { id: conversationId } = await params;
+  const auth = await getAuthContext();
+  if (!auth.ok) return auth.response;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json(
-      { error: { code: 'UNAUTHORIZED', message: '認証されていません' } },
-      { status: 401 }
-    );
+  const propertyId = await auth.services.auth.getUserPropertyId(auth.user.id);
+  if (!propertyId) {
+    return errorResponse('USER_NOT_FOUND', 'ユーザー情報が見つかりません', 404);
   }
 
-  // ユーザー情報（property_id）を取得
-  const { data: userData } = await supabase
-    .from('users')
-    .select('property_id')
-    .eq('id', user.id)
-    .single();
-
-  if (!userData) {
-    return NextResponse.json(
-      { error: { code: 'USER_NOT_FOUND', message: 'ユーザー情報が見つかりません' } },
-      { status: 404 }
-    );
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('INVALID_JSON', 'リクエストボディが不正です', 400);
   }
 
-  const body = await request.json();
-  const content = body.content?.trim();
-
-  if (!content) {
-    return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: '質問テキストが必要です' } },
-      { status: 400 }
-    );
+  const parsed = MessageSendSchema.safeParse({ conversationId, content: (body as Record<string, unknown>).content });
+  if (!parsed.success) {
+    return errorResponse('VALIDATION_ERROR', parsed.error.issues[0].message, 400);
   }
 
   // 1. ユーザーメッセージを保存
-  const { data: userMessage, error: userMsgError } = await supabase
-    .from('messages')
-    .insert({
+  let userMessage;
+  try {
+    userMessage = await auth.services.message.create({
       conversation_id: conversationId,
       role: 'user',
-      content,
-    })
-    .select('id, role, content, created_at')
-    .single();
-
-  if (userMsgError) {
-    return NextResponse.json(
-      { error: { code: 'SAVE_FAILED', message: userMsgError.message } },
-      { status: 500 }
-    );
+      content: parsed.data.content,
+    });
+  } catch {
+    return errorResponse('SAVE_FAILED', 'メッセージの保存に失敗しました', 500);
   }
 
   // 2. AI 回答生成（Service Role Key で実行）
   let answer;
   try {
-    const { createAdminClient } = await import('@/lib/supabase/admin');
-    const adminClient = createAdminClient();
-    answer = await generateAnswer(adminClient, content, userData.property_id);
+    const adminServices = createAdminServices();
+    answer = await adminServices.chatAnswer.generateAnswer(parsed.data.content, propertyId);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'AI回答の生成に失敗しました';
     console.error('generateAnswer error:', message);
-    return NextResponse.json(
-      { error: { code: 'AI_ERROR', message } },
-      { status: 500 }
-    );
+    return errorResponse('AI_ERROR', message, 500);
   }
 
   // 3. AI回答メッセージを保存
-  const { data: assistantMessage, error: assistantMsgError } = await supabase
-    .from('messages')
-    .insert({
+  let assistantMessage;
+  try {
+    assistantMessage = await auth.services.message.create({
       conversation_id: conversationId,
       role: 'assistant',
       content: answer.content,
-    })
-    .select('id, role, content, feedback, created_at')
-    .single();
-
-  if (assistantMsgError) {
-    return NextResponse.json(
-      { error: { code: 'SAVE_FAILED', message: assistantMsgError.message } },
-      { status: 500 }
-    );
+    });
+  } catch {
+    return errorResponse('SAVE_FAILED', 'AI回答の保存に失敗しました', 500);
   }
 
   return NextResponse.json({
     user_message: userMessage,
-    assistant_message: {
-      ...assistantMessage,
-      sources: answer.sources,
-    },
+    assistant_message: { ...assistantMessage, sources: answer.sources },
   });
 }

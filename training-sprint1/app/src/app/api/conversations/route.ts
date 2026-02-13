@@ -1,31 +1,14 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getAuthContext, errorResponse } from '@/lib/api-helpers';
 
 export async function POST() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await getAuthContext();
+  if (!auth.ok) return auth.response;
 
-  if (!user) {
-    return NextResponse.json(
-      { error: { code: 'UNAUTHORIZED', message: '認証されていません' } },
-      { status: 401 }
-    );
+  try {
+    const conversation = await auth.services.conversation.create(auth.user.id);
+    return NextResponse.json(conversation);
+  } catch {
+    return errorResponse('CREATE_FAILED', '会話の作成に失敗しました', 500);
   }
-
-  const { data, error } = await supabase
-    .from('conversations')
-    .insert({ user_id: user.id })
-    .select('id, created_at')
-    .single();
-
-  if (error) {
-    return NextResponse.json(
-      { error: { code: 'CREATE_FAILED', message: error.message } },
-      { status: 500 }
-    );
-  }
-
-  return NextResponse.json(data);
 }

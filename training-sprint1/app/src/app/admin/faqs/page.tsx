@@ -1,33 +1,18 @@
-import { createClient } from '@/lib/supabase/server';
+import { getPageAuth } from '@/lib/page-helpers';
 import { FaqManager } from './faq-manager';
 
 export default async function FaqsPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { userId, services } = await getPageAuth();
 
-  if (!user) return null;
+  const propertyId = await services.auth.getUserPropertyId(userId);
+  if (!propertyId) return null;
 
-  const { data: userData } = await supabase
-    .from('users')
-    .select('property_id')
-    .eq('id', user.id)
-    .single();
-
-  if (!userData) return null;
-
-  const { data: faqs } = await supabase
-    .from('faqs')
-    .select('*')
-    .eq('property_id', userData.property_id)
-    .order('category')
-    .order('created_at', { ascending: false });
+  const faqs = await services.faq.getByPropertyId(propertyId);
 
   return (
     <div>
       <h2 className="text-xl font-bold text-gray-900 mb-6">FAQ管理</h2>
-      <FaqManager faqs={faqs ?? []} />
+      <FaqManager faqs={faqs} />
     </div>
   );
 }

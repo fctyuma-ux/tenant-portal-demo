@@ -1,0 +1,10 @@
+export type { IUserRepository } from './user-repository';
+export type { IDocumentRepository } from './document-repository';
+export type { IDocumentChunkRepository, VectorSearchResult } from './document-chunk-repository';
+export type { IFaqRepository } from './faq-repository';
+export type { IConversationRepository } from './conversation-repository';
+export type { IMessageRepository } from './message-repository';
+export type { IPropertyRepository } from './property-repository';
+export type { IAnnouncementRepository } from './announcement-repository';
+export type { IStorageRepository } from './storage-repository';
+export type { IAIClient } from './ai-client';

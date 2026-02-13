@@ -1,44 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getAuthContext, errorResponse } from '@/lib/api-helpers';
+import { MessageFeedbackSchema } from '@/schemas/message';
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: messageId } = await params;
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json(
-      { error: { code: 'UNAUTHORIZED', message: '認証されていません' } },
-      { status: 401 }
-    );
-  }
+  const auth = await getAuthContext();
+  if (!auth.ok) return auth.response;
 
   const body = await request.json();
-  const feedback = body.feedback;
-
-  if (feedback !== 'positive' && feedback !== 'negative') {
-    return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'feedback は positive または negative' } },
-      { status: 400 }
-    );
+  const parsed = MessageFeedbackSchema.safeParse({ messageId, feedback: body.feedback });
+  if (!parsed.success) {
+    return errorResponse('VALIDATION_ERROR', parsed.error.issues[0].message, 400);
   }
 
-  const { data, error } = await supabase
-    .from('messages')
-    .update({ feedback })
-    .eq('id', messageId)
-    .select('id, feedback')
-    .single();
-
-  if (error) {
-    return NextResponse.json(
-      { error: { code: 'UPDATE_FAILED', message: error.message } },
-      { status: 500 }
+  try {
+    const result = await auth.services.message.updateFeedback(
+      parsed.data.messageId,
+      parsed.data.feedback,
+      auth.user.id
     );
+    return NextResponse.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'フィードバックの更新に失敗しました';
+    const status = message.includes('権限') || message.includes('見つかりません') ? 403 : 500;
+    return errorResponse('UPDATE_FAILED', message, status);
   }
-
-  return NextResponse.json(data);
 }

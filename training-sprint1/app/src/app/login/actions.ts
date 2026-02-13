@@ -2,27 +2,30 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
+import { LoginInputSchema } from '@/schemas/auth';
+import { createServices } from '@/domain/services/factory';
 
 export async function login(formData: FormData) {
-  const supabase = await createClient();
+  const parsed = LoginInputSchema.safeParse({
+    email: formData.get('email'),
+    password: formData.get('password'),
+  });
 
-  const email = formData.get('email') as string;
-  const password = formData.get('password') as string;
-
-  if (!email || !password) {
-    return { error: 'メールアドレスとパスワードを入力してください' };
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0].message };
   }
 
+  const supabase = await createClient();
+
   const { error: authError } = await supabase.auth.signInWithPassword({
-    email,
-    password,
+    email: parsed.data.email,
+    password: parsed.data.password,
   });
 
   if (authError) {
     return { error: 'メールアドレスまたはパスワードが正しくありません' };
   }
 
-  // ロールを取得してリダイレクト先を判定
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -31,9 +34,10 @@ export async function login(formData: FormData) {
     return { error: '認証に失敗しました' };
   }
 
-  const { data: userData } = await supabase.from('users').select('role').eq('id', user.id).single();
+  const services = createServices(supabase);
+  const role = await services.auth.getUserRole(user.id);
 
-  if (userData?.role === 'admin') {
+  if (role === 'admin') {
     redirect('/admin');
   } else {
     redirect('/chat');
